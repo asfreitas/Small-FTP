@@ -68,9 +68,9 @@ void *get_in_addr(struct sockaddr *sa)
 
 int main(void)
 {
-    char* filenames = stepThroughDir();
+   // char* filenames = stepThroughDir();
 
-    printf("%s", filenames);
+   // printf("%s", filenames);
 
 
     /*
