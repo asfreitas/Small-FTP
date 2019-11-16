@@ -10,6 +10,9 @@ def commandLineValidation(argv):
         return False
     return True
 
+def connectSocket(socket):
+    socket.listen(1)
+    print('Attempting to connect to server')
 def parseCommandLine(argv, connectInfo):
     if not commandLineValidation(argv):
         sys.exit(0)
@@ -18,12 +21,15 @@ def parseCommandLine(argv, connectInfo):
     if argv[3] == "-l":
         connectInfo[1] = argv[2]
         connectInfo[2] = argv[4]
-        return "/list"
+        return "listdir/"
     connectInfo[2] = argv[5]
     return argv[4]
-    
+
 def sendCommand(connectionSocket, command):
     connectionSocket.sendall(command.encode())
+
+def receiveMessage(connectionSocket):
+    return connectionSocket.recv(4, 0)
 
 def main():
     serverName = ""
@@ -32,13 +38,23 @@ def main():
     connectInfo = [serverName, controlPort, dataPort]
     command = parseCommandLine(sys.argv, connectInfo)
 
+    command += str(connectInfo[2])
+    print(command)
+    controlSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+    controlSocket.connect((connectInfo[0], int(connectInfo[1])))
 
-    clientSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-    clientSocket.connect((connectInfo[0], connectInfo[1]))
+    sendCommand(controlSocket, command)
 
-    sendCommand(clientSocket, command)
+    dataSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+    dataSocket.bind(('', int(connectInfo[2])))
+    connectSocket(dataSocket)
 
+    connectionSocket, addr = dataSocket.accept()
     
+    message = receiveMessage(connectionSocket)
+    message = int.from_bytes(message, byteorder='little')
+
+    print(message)
 
 
 if __name__ == "__main__":
