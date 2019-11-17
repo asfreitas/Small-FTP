@@ -14,8 +14,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-#define CONTROL_PORT "3482"  // the port users will be connecting to
-#define DATA_PORT "3491"
+#define CONTROL_PORT "3484"  // the port users will be connecting to
+#define DATA_PORT "3494"
 #define BACKLOG 10   // how many pending connections queue will hold
 
 const int MAX_FILE_LENGTH = 256;
@@ -74,66 +74,59 @@ int receiveCommand(int new_fd, char* buffer){
         return recv(new_fd, buffer, 20, 0);
 
 }
+ // loop through all the results and bind to the first we can
 
-int main(void)
+void bindHostConnection(int* controlSock, int yes, struct addrinfo **p, struct addrinfo *servinfo)
 {
-   // char* filenames = stepThroughDir();
-
-   // printf("%s", filenames);
-
-    int controlSock;  // listen on sock_fd, new connection on new_fd
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_storage their_addr; // connector's address information
-    socklen_t sin_size;
-    struct sigaction sa;
-    int yes=1;
-    char s[INET6_ADDRSTRLEN];
-    int controlRV, dataRV, rv;
-
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE; // use my IP
-
-   if ((rv = getaddrinfo(NULL, CONTROL_PORT, &hints, &servinfo)) != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-        return 1;
-    }
-    
-        // loop through all the results and bind to the first we can
-    for(p = servinfo; p != NULL; p = p->ai_next) {
-        if ((controlSock = socket(p->ai_family, p->ai_socktype,
-                p->ai_protocol)) == -1) {
+    for(*p = servinfo; *p != NULL; *p = (*p)->ai_next) {
+        if ((*controlSock = socket((*p)->ai_family, (*p)->ai_socktype,
+                (*p)->ai_protocol)) == -1) {
             perror("server: socket");
             continue;
         }
 
-        if (setsockopt(controlSock, SOL_SOCKET, SO_REUSEADDR, &yes,
+        if (setsockopt(*controlSock, SOL_SOCKET, SO_REUSEADDR, &yes,
                 sizeof(int)) == -1) {
             perror("setsockopt");
             exit(1);
         }
 
-        if (bind(controlSock, p->ai_addr, p->ai_addrlen) == -1) {
-            close(controlSock);
+        if (bind(*controlSock, (*p)->ai_addr, (*p)->ai_addrlen) == -1) {
+            close(*controlSock);
             perror("server: bind");
             continue;
         }
 
         break;
     }
-
-    freeaddrinfo(servinfo); // all done with this structure
-
-    if (p == NULL)  {
-        fprintf(stderr, "server: failed to bind\n");
-        exit(1);
-    }
-    if (listen(controlSock, BACKLOG) == -1) {
-    perror("listen");
+    if (*p == NULL)  {
+    fprintf(stderr, "server: failed to bind\n");
     exit(1);
     }
 
+}
+
+void bindClientConnection(int* sockfd, struct addrinfo *p, struct addrinfo *servinfo)
+{
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+    if ((*sockfd = socket(p->ai_family, p->ai_socktype,
+            p->ai_protocol)) == -1) {
+        perror("client: socket");
+        continue;
+    }
+
+    if (connect(*sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+        close(*sockfd);
+        perror("client: connect");
+        continue;
+    }
+
+    break;
+    }
+}
+
+void sigchildSetup(struct sigaction sa)
+{
     sa.sa_handler = sigchld_handler; // reap all dead processes
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
@@ -141,6 +134,47 @@ int main(void)
         perror("sigaction");
         exit(1);
     }
+
+}
+void socketSetup(struct addrinfo *hints, int isHost)
+{
+
+    memset(hints, 0, sizeof *hints);
+    hints->ai_family = AF_UNSPEC;
+    hints->ai_socktype = SOCK_STREAM;
+    hints->ai_flags = AI_PASSIVE; // use my IP
+}
+int main(void)
+{
+    struct sigaction sa;
+    sigchildSetup(sa);
+
+    int controlSock;  // listen on sock_fd, new connection on new_fd
+    struct addrinfo hints, *servinfo, *p;
+    struct sockaddr_storage their_addr; // connector's address information
+    socklen_t sin_size;
+    int yes=1;
+    char s[INET6_ADDRSTRLEN];
+    int controlRV, dataRV, rv;
+
+    socketSetup(&hints, 1);
+
+   if ((rv = getaddrinfo(NULL, CONTROL_PORT, &hints, &servinfo)) != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+        return 1;
+    }
+    
+
+    bindHostConnection(&controlSock, yes, &p, servinfo);
+
+    freeaddrinfo(servinfo); // all done with this structure
+
+
+    if (listen(controlSock, BACKLOG) == -1) {
+    perror("listen");
+    exit(1);
+    }
+
 
     printf("server: waiting for connections...\n");
     char* filenames;
@@ -175,8 +209,8 @@ int main(void)
             *
             * 
             * */
-            int sockfd, numbytes;  
-    struct addrinfo hints, *servinfo, *p;
+    int sockfd, numbytes;
+    struct addrinfo hints, *clientinfo, *q;
     int rv;
 
 
@@ -184,13 +218,13 @@ int main(void)
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if ((rv = getaddrinfo(s, port, &hints, &servinfo)) != 0) {
+    if ((rv = getaddrinfo(s, port, &hints, &clientinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return 1;
     }
 
     // loop through all the results and connect to the first we can
-    for(p = servinfo; p != NULL; p = p->ai_next) {
+    for(p = clientinfo; p != NULL; p = p->ai_next) {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
                 p->ai_protocol)) == -1) {
             perror("client: socket");
@@ -205,17 +239,18 @@ int main(void)
 
         break;
     }
+    //bindClientConnection(&sockfd, q, clientinfo);
 
     if (p == NULL) {
         fprintf(stderr, "client: failed to connect\n");
         return 2;
     }
 
-    inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
+    inet_ntop(q->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
             s, sizeof s);
     printf("client: connecting to %s\n", s);
 
-    freeaddrinfo(servinfo); // all done with this structure
+    freeaddrinfo(clientinfo); // all done with this structure
 
 
             if(strcmp(command, "listdir") == 0){
