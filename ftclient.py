@@ -21,15 +21,15 @@ def parseCommandLine(argv, connectInfo):
     if argv[3] == "-l":
         connectInfo[1] = argv[2]
         connectInfo[2] = argv[4]
-        return "listdir/"
+        return "-l/"
     connectInfo[2] = argv[5]
     return argv[4]
 
 def sendCommand(connectionSocket, command):
     connectionSocket.sendall(command.encode())
 
-def receiveMessage(connectionSocket):
-    return connectionSocket.recv(4, 0)
+def receiveMessage(connectionSocket, size):
+    return connectionSocket.recv(size)
 
 def main():
     serverName = ""
@@ -38,23 +38,29 @@ def main():
     connectInfo = [serverName, controlPort, dataPort]
     command = parseCommandLine(sys.argv, connectInfo)
 
+
+    dataSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
+    dataSocket.bind(('', int(connectInfo[2])))
+    connectSocket(dataSocket)
+
     command += str(connectInfo[2])
     print(command)
     controlSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
     controlSocket.connect((connectInfo[0], int(connectInfo[1])))
 
     sendCommand(controlSocket, command)
+    checkCommand = controlSocket.recv(2).decode()
+    print(checkCommand)
+    controlSocket.close()
 
-    dataSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
-    dataSocket.bind(('', int(connectInfo[2])))
-    connectSocket(dataSocket)
+    if checkCommand == "ok":
 
-    connectionSocket, addr = dataSocket.accept()
-    
-    message = receiveMessage(connectionSocket)
-    message = int.from_bytes(message, byteorder='little')
+        connectionSocket, addr = dataSocket.accept()
+        
+        message = receiveMessage(connectionSocket, 4)
+        message = int.from_bytes(message, byteorder='little')
 
-    print(message)
+        print(message)
 
 
 if __name__ == "__main__":

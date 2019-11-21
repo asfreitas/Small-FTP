@@ -13,9 +13,9 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 
-#define CONTROL_PORT "3484"  // the port users will be connecting to
-#define DATA_PORT "3494"
+#define CONTROL_PORT "3388"  // the port users will be connecting to
 #define BACKLOG 10   // how many pending connections queue will hold
 
 const int MAX_FILE_LENGTH = 256;
@@ -70,11 +70,14 @@ void *get_in_addr(struct sockaddr *sa)
 
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
+
 int receiveCommand(int new_fd, char* buffer){
         return recv(new_fd, buffer, 20, 0);
 
 }
- // loop through all the results and bind to the first we can
+int sendData(int new_fd, int size, char* buffer){
+    return send(new_fd, buffer, size, 0);
+}
 
 void bindHostConnection(int* controlSock, int yes, struct addrinfo **p, struct addrinfo *servinfo)
 {
@@ -106,23 +109,29 @@ void bindHostConnection(int* controlSock, int yes, struct addrinfo **p, struct a
 
 }
 
-void bindClientConnection(int* sockfd, struct addrinfo *p, struct addrinfo *servinfo)
+int bindClientConnection(int* sockfd, struct addrinfo **p, struct addrinfo *servinfo)
 {
-    for(p = servinfo; p != NULL; p = p->ai_next) {
-    if ((*sockfd = socket(p->ai_family, p->ai_socktype,
-            p->ai_protocol)) == -1) {
-        perror("client: socket");
-        continue;
+
+    for(*p = servinfo; *p != NULL; *p = (*p)->ai_next) {
+        if ((*sockfd = socket((*p)->ai_family, (*p)->ai_socktype,
+                (*p)->ai_protocol)) == -1) {
+            perror("client: socket");
+            continue;
+        }
+
+        if (connect(*sockfd, (*p)->ai_addr, (*p)->ai_addrlen) == -1) {
+            close(*sockfd);
+            perror("client: connect");
+            continue;
+        }
+
+        break;
+    }
+    if (*p == NULL) {
+        fprintf(stderr, "client: failed to connect\n");
+        return 2;
     }
 
-    if (connect(*sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-        close(*sockfd);
-        perror("client: connect");
-        continue;
-    }
-
-    break;
-    }
 }
 
 void sigchildSetup(struct sigaction sa)
@@ -144,26 +153,33 @@ void socketSetup(struct addrinfo *hints, int isHost)
     hints->ai_socktype = SOCK_STREAM;
     hints->ai_flags = AI_PASSIVE; // use my IP
 }
+
+int validCommand(char* command)
+{
+    if(strcmp(command, "-l") == 0)
+        return 1;
+    return 0;
+}
 int main(void)
 {
     struct sigaction sa;
     sigchildSetup(sa);
 
     int controlSock;  // listen on sock_fd, new connection on new_fd
-    struct addrinfo hints, *servinfo, *p;
+    struct addrinfo hints, *servinfo, *p, *clientinfo, *q;
     struct sockaddr_storage their_addr; // connector's address information
     socklen_t sin_size;
     int yes=1;
     char s[INET6_ADDRSTRLEN];
-    int controlRV, dataRV, rv;
+    int controlRV, dataRV, rv, sockfd, numbytes;
 
     socketSetup(&hints, 1);
 
-   if ((rv = getaddrinfo(NULL, CONTROL_PORT, &hints, &servinfo)) != 0) {
+    if ((rv = getaddrinfo(NULL, CONTROL_PORT, &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return 1;
     }
-    
+
 
     bindHostConnection(&controlSock, yes, &p, servinfo);
 
@@ -204,65 +220,49 @@ int main(void)
             if (receiveCommand(new_fd, buffer))
                 perror("send");
             parseCommand(buffer, port, command);
-            /* child process accept 
 
-            *
-            * 
-            * */
-    int sockfd, numbytes;
-    struct addrinfo hints, *clientinfo, *q;
-    int rv;
-
-
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if ((rv = getaddrinfo(s, port, &hints, &clientinfo)) != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-        return 1;
-    }
-
-    // loop through all the results and connect to the first we can
-    for(p = clientinfo; p != NULL; p = p->ai_next) {
-        if ((sockfd = socket(p->ai_family, p->ai_socktype,
-                p->ai_protocol)) == -1) {
-            perror("client: socket");
-            continue;
-        }
-
-        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
-            close(sockfd);
-            perror("client: connect");
-            continue;
-        }
-
-        break;
-    }
-    //bindClientConnection(&sockfd, q, clientinfo);
-
-    if (p == NULL) {
-        fprintf(stderr, "client: failed to connect\n");
-        return 2;
-    }
-
-    inet_ntop(q->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
-            s, sizeof s);
-    printf("client: connecting to %s\n", s);
-
-    freeaddrinfo(clientinfo); // all done with this structure
-
-
-            if(strcmp(command, "listdir") == 0){
-                filenames = stepThroughDir();
-                int size = strlen(filenames);
-                send(sockfd, &size, 4, 0);
+            if(validCommand){
+                memset(buffer, 0, 257);
+                strcpy(buffer, "ok");
+                sendData(new_fd, 2, buffer);
             }
+            else{
+                memset(buffer, 0, 257);
+                strcpy(buffer, "This is an invalid command");
+                sendData(new_fd, strlen(buffer), buffer);
+                close(new_fd);
+                return 0;
+            }
+            close(new_fd);
+            memset(&hints, 0, sizeof hints);
+            hints.ai_family = AF_UNSPEC;
+            hints.ai_socktype = SOCK_STREAM;
+
+            if ((rv = getaddrinfo(s, port, &hints, &servinfo)) != 0) {
+                fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+                return 1;
+            }
+
+            // loop through all the results and connect to the first we can
+
+            bindClientConnection(&sockfd, &q, servinfo);
+
+            inet_ntop(q->ai_family, get_in_addr((struct sockaddr *)q->ai_addr),
+                    s, sizeof s);
+            printf("client: connecting to %s\n", s);
+         //   printf("client: connecting to %s\n", s);
+
+            freeaddrinfo(clientinfo); // all done with this structure
+
+            filenames = stepThroughDir();
+            int size = strlen(filenames);
+            printf("%s\n\n", filenames);
+            send(sockfd, &size, 4, 0);
             close(new_fd);
             exit(0);
         }
-        close(new_fd);  // parent doesn't need this
+            close(new_fd);  // parent doesn't need this
     }
 
-    return 0;
+        return 0;
 }
