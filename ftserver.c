@@ -15,7 +15,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#define CONTROL_PORT "3388"  // the port users will be connecting to
+#define CONTROL_PORT "3386"  // the port users will be connecting to
 #define BACKLOG 10   // how many pending connections queue will hold
 
 const int MAX_FILE_LENGTH = 256;
@@ -75,8 +75,9 @@ int receiveCommand(int new_fd, char* buffer){
         return recv(new_fd, buffer, 20, 0);
 
 }
-int sendData(int new_fd, int size, char* buffer){
+int sendData(int new_fd, int size, void* buffer){
     return send(new_fd, buffer, size, 0);
+    
 }
 
 void bindHostConnection(int* controlSock, int yes, struct addrinfo **p, struct addrinfo *servinfo)
@@ -160,18 +161,29 @@ int validCommand(char* command)
         return 1;
     return 0;
 }
+void sendListDir(int socket)
+{
+    char* filenames;
+    filenames = stepThroughDir();
+    int size = strlen(filenames);
+    sendData(socket, 4, &size);
+    sendData(socket, strlen(filenames), filenames);
+}
 int main(void)
 {
+    printf("Server open on %s\n", CONTROL_PORT);
+    
     struct sigaction sa;
     sigchildSetup(sa);
 
-    int controlSock;  // listen on sock_fd, new connection on new_fd
+    int controlConnection;  // listen on sock_fd, new connection on new_fd
     struct addrinfo hints, *servinfo, *p, *clientinfo, *q;
     struct sockaddr_storage their_addr; // connector's address information
     socklen_t sin_size;
     int yes=1;
     char s[INET6_ADDRSTRLEN];
     int controlRV, dataRV, rv, sockfd, numbytes;
+
 
     socketSetup(&hints, 1);
 
@@ -180,19 +192,17 @@ int main(void)
         return 1;
     }
 
-
-    bindHostConnection(&controlSock, yes, &p, servinfo);
+    bindHostConnection(&controlConnection, yes, &p, servinfo);
 
     freeaddrinfo(servinfo); // all done with this structure
 
 
-    if (listen(controlSock, BACKLOG) == -1) {
+    if (listen(controlConnection, BACKLOG) == -1) {
     perror("listen");
     exit(1);
     }
 
 
-    printf("server: waiting for connections...\n");
     char* filenames;
     char buffer[257];
     char port[10];
@@ -201,11 +211,11 @@ int main(void)
     memset(command, 0, 257);
     memset(buffer, 0, 257);
 
-    int new_fd;
+    int controlSocket;
     while(1) {  // main accept() loop
         sin_size = sizeof their_addr;
-        new_fd = accept(controlSock, (struct sockaddr *)&their_addr, &sin_size);
-        if (new_fd == -1) {
+        controlSocket = accept(controlConnection, (struct sockaddr *)&their_addr, &sin_size);
+        if (controlSocket == -1) {
             perror("accept");
             continue;
         }
@@ -213,27 +223,32 @@ int main(void)
         inet_ntop(their_addr.ss_family,
             get_in_addr((struct sockaddr *)&their_addr),
             s, sizeof s);
-        printf("server: got connection from %s\n", s);
+
+        char host[1024];
+        char service[20];
+        getnameinfo(&their_addr,sizeof their_addr, host, sizeof host, service, sizeof service, 0);
+        printf("host: %s\n", host);
+
 
         if (!fork()) { // this is the child process
-            close(controlSock); // child doesn't need the listener
-            if (receiveCommand(new_fd, buffer))
+            close(controlConnection); // child doesn't need the listener
+            if (receiveCommand(controlSocket, buffer))
                 perror("send");
             parseCommand(buffer, port, command);
 
             if(validCommand){
                 memset(buffer, 0, 257);
                 strcpy(buffer, "ok");
-                sendData(new_fd, 2, buffer);
+                sendData(controlSocket, 2, buffer);
             }
             else{
                 memset(buffer, 0, 257);
                 strcpy(buffer, "This is an invalid command");
-                sendData(new_fd, strlen(buffer), buffer);
-                close(new_fd);
-                return 0;
+                sendData(controlSocket, strlen(buffer), buffer);
+                close(controlSocket);
+                return 1;
             }
-            close(new_fd);
+            close(controlSocket);
             memset(&hints, 0, sizeof hints);
             hints.ai_family = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
@@ -249,19 +264,18 @@ int main(void)
 
             inet_ntop(q->ai_family, get_in_addr((struct sockaddr *)q->ai_addr),
                     s, sizeof s);
-            printf("client: connecting to %s\n", s);
-         //   printf("client: connecting to %s\n", s);
 
-            freeaddrinfo(clientinfo); // all done with this structure
+            freeaddrinfo(servinfo); // all done with this structure
 
-            filenames = stepThroughDir();
-            int size = strlen(filenames);
-            printf("%s\n\n", filenames);
-            send(sockfd, &size, 4, 0);
-            close(new_fd);
+            if(strcmp(command, "-l") == 0)
+            {
+                sendListDir(sockfd);
+            }
+
+            close(controlSocket);
             exit(0);
         }
-            close(new_fd);  // parent doesn't need this
+            close(controlSocket);  // parent doesn't need this
     }
 
         return 0;

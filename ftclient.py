@@ -12,7 +12,6 @@ def commandLineValidation(argv):
 
 def connectSocket(socket):
     socket.listen(1)
-    print('Attempting to connect to server')
 def parseCommandLine(argv, connectInfo):
     if not commandLineValidation(argv):
         sys.exit(0)
@@ -31,6 +30,20 @@ def sendCommand(connectionSocket, command):
 def receiveMessage(connectionSocket, size):
     return connectionSocket.recv(size)
 
+def receiveFileList(connectionSocket):
+                
+    size = receiveMessage(connectionSocket, 4)
+    size = int.from_bytes(size, byteorder='little')
+    message = receiveMessage(connectionSocket, size)
+    message = message.decode()
+    return message
+
+def printDirectoryStructure(directories, connectInfo):
+    print("Receiving directory structure from " + connectInfo[0] + ":" + connectInfo[2])
+    listing = directories.split('/')
+    for file in listing:
+        print(file)
+    
 def main():
     serverName = ""
     controlPort = -1
@@ -43,24 +56,21 @@ def main():
     dataSocket.bind(('', int(connectInfo[2])))
     connectSocket(dataSocket)
 
-    command += str(connectInfo[2])
-    print(command)
+    commandPlusPort = command + str(connectInfo[2])
     controlSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
     controlSocket.connect((connectInfo[0], int(connectInfo[1])))
 
-    sendCommand(controlSocket, command)
+    sendCommand(controlSocket, commandPlusPort)
     checkCommand = controlSocket.recv(2).decode()
-    print(checkCommand)
     controlSocket.close()
 
     if checkCommand == "ok":
 
         connectionSocket, addr = dataSocket.accept()
         
-        message = receiveMessage(connectionSocket, 4)
-        message = int.from_bytes(message, byteorder='little')
-
-        print(message)
+        if command == "-l/":
+            message = receiveFileList(connectionSocket)
+            printDirectoryStructure(message, connectInfo)
 
 
 if __name__ == "__main__":
