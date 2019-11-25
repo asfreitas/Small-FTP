@@ -13,16 +13,19 @@ def commandLineValidation(argv):
 def connectSocket(socket):
     socket.listen(1)
 def parseCommandLine(argv, connectInfo):
-    if not commandLineValidation(argv):
-        sys.exit(0)
+ #   if not commandLineValidation(argv):
+  #      sys.exit(0)
 
     connectInfo[0] = argv[1]
     if argv[3] == "-l":
         connectInfo[1] = argv[2]
         connectInfo[2] = argv[4]
         return "-l/"
-    connectInfo[2] = argv[5]
-    return argv[4]
+    if argv[3] == "-g":
+        connectInfo[1] = argv[2]
+        connectInfo[2] = argv[5]
+        connectInfo[3] = argv[4]
+        return "-g/" + argv[4] + "/"       
 
 def sendCommand(connectionSocket, command):
     connectionSocket.sendall(command.encode())
@@ -43,12 +46,22 @@ def printDirectoryStructure(directories, connectInfo):
     listing = directories.split('/')
     for file in listing:
         print(file)
-    
+def receiveFile(connectionSocket, connectInfo):
+    newfile = open(connectInfo[3], "w")
+    for x in range(4):
+        buffer = receiveMessage(connectionSocket, 10)
+        print(buffer)
+        buffer = buffer.decode().rstrip("\x00")
+        print(buffer)
+        newfile.write(buffer)
+
+
 def main():
     serverName = ""
     controlPort = -1
     dataPort = -1
-    connectInfo = [serverName, controlPort, dataPort]
+    file = ""
+    connectInfo = [serverName, controlPort, dataPort, file]
     command = parseCommandLine(sys.argv, connectInfo)
 
 
@@ -71,6 +84,8 @@ def main():
         if command == "-l/":
             message = receiveFileList(connectionSocket)
             printDirectoryStructure(message, connectInfo)
+        else:
+            receiveFile(connectionSocket, connectInfo)
 
 
 if __name__ == "__main__":

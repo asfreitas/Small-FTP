@@ -21,9 +21,11 @@
 const int MAX_FILE_LENGTH = 256;
 const int MAX_NUM_DIR = 65535;
 
-void parseCommand(char* buffer, char* port, char* command)
+void parseCommand(char* buffer, char* port, char* command, char* filename)
 {
     strcpy(command, (strtok(buffer, "/")));
+    if(strstr(command, "-g") != NULL)
+        strcpy(filename, strtok(NULL, "/"));
     strcpy(port, (strtok(NULL, "/")));
 }
 
@@ -157,7 +159,7 @@ void socketSetup(struct addrinfo *hints, int isHost)
 
 int validCommand(char* command)
 {
-    if(strcmp(command, "-l") == 0)
+    if(strcmp(command, "-l") == 0 || strcmp(command, "-g") == 0)
         return 1;
     return 0;
 }
@@ -168,6 +170,23 @@ void sendListDir(int socket)
     int size = strlen(filenames);
     sendData(socket, 4, &size);
     sendData(socket, strlen(filenames), filenames);
+}
+int sendFile(int socket, char* filename)
+{
+    char buffer[512], *result;
+    FILE* file;
+    file = fopen(filename, "r");
+    if(file == NULL)
+    {
+        return 1;
+    }
+    while((result = fgets(buffer, 512, file)) != NULL)
+    {
+        printf("Sending: %s", result);
+        sendData(socket, 10, buffer);
+    }
+    return 0;
+
 }
 int main(void)
 {
@@ -207,6 +226,8 @@ int main(void)
     char buffer[257];
     char port[10];
     char command[257];
+    char filename[MAX_FILE_LENGTH];
+    memset(filename, 0, MAX_FILE_LENGTH);
     memset(port, 0, 10);
     memset(command, 0, 257);
     memset(buffer, 0, 257);
@@ -234,9 +255,9 @@ int main(void)
             close(controlConnection); // child doesn't need the listener
             if (receiveCommand(controlSocket, buffer))
                 perror("send");
-            parseCommand(buffer, port, command);
+            parseCommand(buffer, port, command, filename);
 
-            if(validCommand){
+            if(validCommand(command)){
                 memset(buffer, 0, 257);
                 strcpy(buffer, "ok");
                 sendData(controlSocket, 2, buffer);
@@ -246,7 +267,7 @@ int main(void)
                 strcpy(buffer, "This is an invalid command");
                 sendData(controlSocket, strlen(buffer), buffer);
                 close(controlSocket);
-                return 1;
+                continue;
             }
             close(controlSocket);
             memset(&hints, 0, sizeof hints);
@@ -270,6 +291,11 @@ int main(void)
             if(strcmp(command, "-l") == 0)
             {
                 sendListDir(sockfd);
+            }
+            if(strcmp(command, "-g") == 0)
+            {
+                printf("Sending file");
+                sendFile(sockfd, filename);
             }
 
             close(controlSocket);
