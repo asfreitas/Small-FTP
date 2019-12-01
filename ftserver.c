@@ -231,7 +231,7 @@ void sendListDir(int socket)
 * and socket given to the function
 * and returns 1 if the file cannot be found
 */
-int sendFile(int socket, char* filename)
+int sendFile(int controlSocket, int dataSocket, char* filename)
 {
     int total;
     char buffer[512], totalbuffer[512], *result;
@@ -242,14 +242,16 @@ int sendFile(int socket, char* filename)
     {
         return 1;
     }
+    sendData(controlSocket, 2, "ok");
+
     fseek(file, 0 , SEEK_END);
     unsigned fileSize = ftell(file);
     printf("The file length is: %d", fileSize);
-    sendData(socket,4, &fileSize);
+    sendData(dataSocket,4, &fileSize);
     rewind(file);
     while((result = fgets(buffer, 512, file)) != NULL)
     {
-        sendData(socket, strlen(buffer), buffer);
+        sendData(dataSocket, strlen(buffer), buffer);
     }
     return 0;
 
@@ -317,8 +319,8 @@ int main(int argc, char* argv[])
         printf("Connection from: %s\n", hostname);
 
 
-        if (!fork()) { // this is the child process
-            close(controlConnection); // child doesn't need the listener
+//        if (!fork()) { // this is the child process
+//            close(controlConnection); // child doesn't need the listener
             receiveCommand(controlSocket, buffer);
             parseCommand(buffer, port, command, filename);
 
@@ -329,7 +331,10 @@ int main(int argc, char* argv[])
             }
             else{
                 memset(buffer, 0, 257);
-                strcpy(buffer, "This is an invalid command");
+                sendData(controlSocket, 2, "no"); // this is lost but is necessary to line up sending calls
+                strcpy(buffer, "INVALID COMMAND");
+                unsigned size = strlen(buffer);
+                sendData(controlSocket, 4, &size);
                 sendData(controlSocket, strlen(buffer), buffer);
                 close(controlSocket);
                 continue;
@@ -359,15 +364,21 @@ int main(int argc, char* argv[])
             }
             if(strcmp(command, "-g") == 0)
             {
-                printf("Sending file");
-                if(sendFile(sockfd, filename) == 1)
+                printf("File %s requested on port %s", filename, port);
+                if(sendFile(controlSocket, sockfd, filename) == 1)
                 {
-                    
+                    sendData(controlSocket, 2, "no"); // this is lost but necessary because the client is expecting a message
+
+                    printf("File not found. Sending error message to %s:%s", hostname, argv[1]);
+                    char errorMessage[15] = "FILE NOT FOUND";
+                    unsigned length = strlen(errorMessage);
+                    sendData(controlSocket, 4, &length);
+                    sendData(controlSocket, length, errorMessage);
                 }
             }
 
-            exit(0);
-        }
+ //           exit(0);
+//        }
     }
 
         return 0;

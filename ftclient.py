@@ -7,6 +7,7 @@
 
 import sys as sys
 import socket as sock
+import os as os
 
 # Checks command line input for proper length only dependent on type
 # Returns true or false
@@ -27,17 +28,22 @@ def connectSocket(socket):
 def parseCommandLine(argv, connectInfo):
  #   if not commandLineValidation(argv):
   #      sys.exit(0)
-
+    command = ""
     connectInfo[0] = argv[1]
     if argv[3] == "-l":
         connectInfo[1] = argv[2]
         connectInfo[2] = argv[4]
-        return "-l/"
+        command = "-l/"
     if argv[3] == "-g":
         connectInfo[1] = argv[2]
         connectInfo[2] = argv[5]
         connectInfo[3] = argv[4]
-        return "-g/" + argv[4] + "/"       
+        command = "-g/" + argv[4] + "/"   
+    else:
+        connectInfo[1] = argv[2]
+        connectInfo[2] = argv[4]
+        command = argv[3] + "/"
+    return command
 
 def sendCommand(connectionSocket, command):
     connectionSocket.sendall(command.encode())
@@ -60,20 +66,39 @@ def receiveFileList(connectionSocket):
     return message
 # Parses the message received from the server and prints
 # to the console window
-def printDirectoryStructure(directories, connectInfo):
-    listing = directories.split('/')
+def printDirectoryStructure(files, connectInfo):
+    listing = files.split('/')
     for file in listing:
         print(file)
+# This is very rudimentary but it adds a "1" at the end of the file if it detects
+# that it is already in the directory
+def checkForDuplicateFiles(filename):
+    files = [f for f in os.listdir('.') if os.path.isfile(f)] # source: https://stackoverflow.com/questions/11968976/list-files-only-in-the-current-directory
+    while filename in files:
+        filename = filename[:len(filename) - 4]
+        filename += "1.txt"
+    return filename
 # Receives a file and writes to a new file
 def receiveFile(connectionSocket, connectInfo):
-    newfile = open(connectInfo[3], "w")
+    filename = checkForDuplicateFiles(connectInfo[3])
+    newfile = open(filename, "w")
     size = getSize(connectionSocket)
     bytesreceived = 0
     while(bytesreceived < size):
         buffer = receiveMessage(connectionSocket, 512)
-        print(buffer)
         newfile.write(buffer.decode())
         bytesreceived += len(buffer)
+# Returns the error message dependent on the error provided
+def getError(connectionSocket, connectInfo, error):
+    if error == "nofile":
+        size = getSize(connectionSocket)
+        buffer = receiveMessage(connectionSocket, size)
+    if error == "invalidcommand":
+        size = getSize(connectionSocket)
+        buffer = receiveMessage(connectionSocket, size)
+    return buffer.decode()
+
+
 
 
 def main():
@@ -83,7 +108,7 @@ def main():
     file = ""
     connectInfo = [serverName, controlPort, dataPort, file]
     command = parseCommandLine(sys.argv, connectInfo)
-
+    
 
     dataSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
     dataSocket.bind(('', int(connectInfo[2])))
@@ -93,20 +118,35 @@ def main():
     controlSocket = sock.socket(sock.AF_INET, sock.SOCK_STREAM)
     controlSocket.connect((connectInfo[0], int(connectInfo[1])))
 
+    hostname = sock.gethostbyaddr(controlSocket.getpeername()[0])[0]
+
     sendCommand(controlSocket, commandPlusPort)
     checkCommand = controlSocket.recv(2).decode()
-    controlSocket.close()
-
     if checkCommand == "ok":
 
-        connectionSocket, addr = dataSocket.accept()
         
         if command == "-l/":
-            print("Receiving directory structure from " + connectInfo[0] + ":" + connectInfo[2])
+            connectionSocket, addr = dataSocket.accept()
+            print("Receiving directory structure from " + hostname + ":" + connectInfo[2])
             message = receiveFileList(connectionSocket)
             printDirectoryStructure(message, connectInfo)
         else:
-            receiveFile(connectionSocket, connectInfo)
+            fileCheck = controlSocket.recv(2).decode()
+            if fileCheck == "ok":
+                print("Receiving " + "\"" + connectInfo[3] + "\" from " + hostname + ":" + connectInfo[2])
+                connectionSocket, addr = dataSocket.accept()
+                receiveFile(connectionSocket, connectInfo)
+                print("File transfer complete.")
+            else:
+                errorMessage = getError(controlSocket, connectInfo, "nofile")
+                print(hostname +":" + connectInfo[1] + " says " + errorMessage)
+    else:
+        errorMessage = getError(controlSocket, connectInfo, "invalidcommand")
+        print(hostname +":" + connectInfo[1] + " says " + errorMessage)
+
+        
+    controlSocket.close()
+            
 
 
 if __name__ == "__main__":
