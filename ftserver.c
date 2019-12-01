@@ -5,8 +5,6 @@
 * 12/01/2019
 */
 
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -24,11 +22,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#define BACKLOG 10   // how many pending connections queue will hold
-
 const int MAX_FILE_LENGTH = 256;
 const int MAX_NUM_DIR = 65535;
-
+/*
+* Parses the command and sets the 
+* different variables dependent on the command
+*/
 void parseCommand(char* buffer, char* port, char* command, char* filename)
 {
     strcpy(command, (strtok(buffer, "/")));
@@ -225,6 +224,7 @@ void sendListDir(int socket)
     int size = strlen(filenames);
     sendData(socket, 4, &size);
     sendData(socket, strlen(filenames), filenames);
+    free(filenames);
 }
 /*
 * This function sends the file using the filename
@@ -263,13 +263,13 @@ int main(int argc, char* argv[])
     struct sigaction sa;
     sigchildSetup(sa);
 
-    int controlConnection;  // listen on sock_fd, new connection on new_fd
+    int controlConnection, controlSocket;
     struct addrinfo hints, *servinfo, *p, *clientinfo, *q;
     struct sockaddr_storage their_addr; // connector's address information
     socklen_t sin_size;
     int yes=1;
     char s[INET6_ADDRSTRLEN];
-    int controlRV, dataRV, rv, sockfd, numbytes;
+    int controlRV, dataRV, rv, dataSocket, numbytes;
 
 
     socketSetup(&hints, 1);
@@ -284,24 +284,20 @@ int main(int argc, char* argv[])
     freeaddrinfo(servinfo); // all done with this structure
 
 
-    if (listen(controlConnection, BACKLOG) == -1) {
+    if (listen(controlConnection, 1) == -1) {
     perror("listen");
     exit(1);
     }
 
 
     char* filenames;
-    char buffer[257];
-    char port[10];
-    char command[257];
-    char filename[MAX_FILE_LENGTH];
+    char buffer[257], port[10], command[257], filename[MAX_FILE_LENGTH];
     memset(filename, 0, MAX_FILE_LENGTH);
     memset(port, 0, 10);
     memset(command, 0, 257);
     memset(buffer, 0, 257);
 
-    int controlSocket;
-    while(1) {  // main accept() loop
+    while(1) { 
         sin_size = sizeof their_addr;
         controlSocket = accept(controlConnection, (struct sockaddr *)&their_addr, &sin_size);
         if (controlSocket == -1) {
@@ -319,67 +315,64 @@ int main(int argc, char* argv[])
         printf("Connection from: %s\n", hostname);
 
 
-//        if (!fork()) { // this is the child process
-//            close(controlConnection); // child doesn't need the listener
-            receiveCommand(controlSocket, buffer);
-            parseCommand(buffer, port, command, filename);
 
-            if(validCommand(command)){
-                memset(buffer, 0, 257);
-                strcpy(buffer, "ok");
-                sendData(controlSocket, 2, buffer);
-            }
-            else{
-                memset(buffer, 0, 257);
-                sendData(controlSocket, 2, "no"); // this is lost but is necessary to line up sending calls
-                strcpy(buffer, "INVALID COMMAND");
-                unsigned size = strlen(buffer);
-                sendData(controlSocket, 4, &size);
-                sendData(controlSocket, strlen(buffer), buffer);
-                close(controlSocket);
-                continue;
-            }
-            memset(&hints, 0, sizeof hints);
-            hints.ai_family = AF_UNSPEC;
-            hints.ai_socktype = SOCK_STREAM;
+        receiveCommand(controlSocket, buffer);
+        parseCommand(buffer, port, command, filename);
 
-            if ((rv = getaddrinfo(s, port, &hints, &servinfo)) != 0) {
-                fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-                return 1;
-            }
+        if(validCommand(command)){
+            memset(buffer, 0, 257);
+            strcpy(buffer, "ok");
+            sendData(controlSocket, 2, buffer);
+        }
+        else{
+            memset(buffer, 0, 257);
+            sendData(controlSocket, 2, "no"); // this is lost but is necessary to line up sending calls
+            strcpy(buffer, "INVALID COMMAND");
+            unsigned size = strlen(buffer);
+            sendData(controlSocket, 4, &size);
+            sendData(controlSocket, strlen(buffer), buffer);
+            continue;
+        }
+        memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
 
-            // loop through all the results and connect to the first we can
+        if ((rv = getaddrinfo(s, port, &hints, &servinfo)) != 0) {
+            fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+            return 1;
+        }
 
-            bindClientConnection(&sockfd, &q, servinfo);
+        // loop through all the results and connect to the first we can
 
-            inet_ntop(q->ai_family, get_in_addr((struct sockaddr *)q->ai_addr),
-                    s, sizeof s);
+        bindClientConnection(&dataSocket, &q, servinfo);
 
-            freeaddrinfo(servinfo); // all done with this structure
+        inet_ntop(q->ai_family, get_in_addr((struct sockaddr *)q->ai_addr),
+                s, sizeof s);
 
-            if(strcmp(command, "-l") == 0)
+        freeaddrinfo(servinfo); // all done with this structure
+
+        if(strcmp(command, "-l") == 0)
+        {
+            printf("Sending directory contents to %s:%s\n", hostname, port);
+
+            sendListDir(dataSocket);
+            
+        }
+        if(strcmp(command, "-g") == 0)
+        {
+            printf("File %s requested on port %s\n", filename, port);
+            if(sendFile(controlSocket, dataSocket, filename) == 1)
             {
-                printf("Sending directory contents to %s:%s", hostname, port);
-                sendListDir(sockfd);
-            }
-            if(strcmp(command, "-g") == 0)
-            {
-                printf("File %s requested on port %s", filename, port);
-                if(sendFile(controlSocket, sockfd, filename) == 1)
-                {
-                    sendData(controlSocket, 2, "no"); // this is lost but necessary because the client is expecting a message
+                sendData(controlSocket, 2, "no"); // this is lost but necessary because the client is expecting a message
 
-                    printf("File not found. Sending error message to %s:%s", hostname, argv[1]);
-                    char errorMessage[15] = "FILE NOT FOUND";
-                    unsigned length = strlen(errorMessage);
-                    sendData(controlSocket, 4, &length);
-                    sendData(controlSocket, length, errorMessage);
-                }
+                printf("File not found. Sending error message to %s:%s\n", hostname, argv[1]);
+                char errorMessage[15] = "FILE NOT FOUND";
+                unsigned length = strlen(errorMessage);
+                sendData(controlSocket, 4, &length);
+                sendData(controlSocket, length, errorMessage);
             }
-
- //           exit(0);
-//        }
+        }
+    close(dataSocket);
     }
-
         return 0;
 }
