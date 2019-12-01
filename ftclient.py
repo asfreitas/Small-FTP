@@ -1,6 +1,15 @@
+#
+# Name: Andrew Freitas
+# OSID: Freitand
+# Project 2
+# 12/01/2019
+#
+
 import sys as sys
 import socket as sock
 
+# Checks command line input for proper length only dependent on type
+# Returns true or false
 def commandLineValidation(argv):
     if argv[3] == "-l" and len(argv) != 5:
         print("Not an appropriate amount of arguments for requesting the directory listing.")
@@ -9,9 +18,12 @@ def commandLineValidation(argv):
         print("Not an appropriate amount of arguments for re")
         return False
     return True
-
+# Begins listening to number of sockets input
 def connectSocket(socket):
     socket.listen(1)
+
+# Parses some of the command line information into a more readable array
+# Returns the proper command parsed a bit for sending
 def parseCommandLine(argv, connectInfo):
  #   if not commandLineValidation(argv):
   #      sys.exit(0)
@@ -32,28 +44,36 @@ def sendCommand(connectionSocket, command):
 
 def receiveMessage(connectionSocket, size):
     return connectionSocket.recv(size)
-
-def receiveFileList(connectionSocket):
-                
+# Gets the size of file being sent from server
+# Returns an integer representing the amount of bytes sent
+def getSize(connectionSocket):
     size = receiveMessage(connectionSocket, 4)
     size = int.from_bytes(size, byteorder='little')
+    return size
+# Receives the list of files from a connection
+# Returns the message unparsed
+def receiveFileList(connectionSocket):
+                
+    size = getSize(connectionSocket)
     message = receiveMessage(connectionSocket, size)
     message = message.decode()
     return message
-
+# Parses the message received from the server and prints
+# to the console window
 def printDirectoryStructure(directories, connectInfo):
-    print("Receiving directory structure from " + connectInfo[0] + ":" + connectInfo[2])
     listing = directories.split('/')
     for file in listing:
         print(file)
+# Receives a file and writes to a new file
 def receiveFile(connectionSocket, connectInfo):
     newfile = open(connectInfo[3], "w")
-    for x in range(4):
-        buffer = receiveMessage(connectionSocket, 10)
+    size = getSize(connectionSocket)
+    bytesreceived = 0
+    while(bytesreceived < size):
+        buffer = receiveMessage(connectionSocket, 512)
         print(buffer)
-        buffer = buffer.decode().rstrip("\x00")
-        print(buffer)
-        newfile.write(buffer)
+        newfile.write(buffer.decode())
+        bytesreceived += len(buffer)
 
 
 def main():
@@ -82,6 +102,7 @@ def main():
         connectionSocket, addr = dataSocket.accept()
         
         if command == "-l/":
+            print("Receiving directory structure from " + connectInfo[0] + ":" + connectInfo[2])
             message = receiveFileList(connectionSocket)
             printDirectoryStructure(message, connectInfo)
         else:

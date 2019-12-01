@@ -1,3 +1,12 @@
+/*
+* Name: Andrew Freitas
+* OSID: Freitand
+* Project 2
+* 12/01/2019
+*/
+
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -15,7 +24,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#define CONTROL_PORT "3386"  // the port users will be connecting to
 #define BACKLOG 10   // how many pending connections queue will hold
 
 const int MAX_FILE_LENGTH = 256;
@@ -28,7 +36,11 @@ void parseCommand(char* buffer, char* port, char* command, char* filename)
         strcpy(filename, strtok(NULL, "/"));
     strcpy(port, (strtok(NULL, "/")));
 }
-
+/*
+* Steps through the current directory and parses all
+* of the filenames by appending each with a "/" for sending
+* and returns a string containing all filenames
+*/
 char* stepThroughDir()
 {
     char* filenames = malloc(MAX_FILE_LENGTH * MAX_NUM_DIR * sizeof(char));
@@ -49,9 +61,15 @@ char* stepThroughDir()
         }
 
     }
+    filenames[strlen(filenames) - 1] = 0; // remove he final "/" for formatting later
     return filenames;
 }
-
+/*
+* This was taken from Beej's guide
+* This sets up the child's signal handler
+* and may not be necessary for this project depending on
+* whether it continues to fork or not.
+*/
 void sigchld_handler(int s)
 {
     // waitpid() might overwrite errno, so we save and restore it:
@@ -61,9 +79,11 @@ void sigchld_handler(int s)
 
     errno = saved_errno;
 }
-
-
-// get sockaddr, IPv4 or IPv6:
+/*
+* This was taken from Beej's guide
+* and is a helper function for connection
+*
+*/
 void *get_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
@@ -72,16 +92,29 @@ void *get_in_addr(struct sockaddr *sa)
 
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
-
+/*
+* This function receives data from the connection 
+* and inserts it into the buffer given
+* and returns the amount of data received
+*/
 int receiveCommand(int new_fd, char* buffer){
-        return recv(new_fd, buffer, 20, 0);
+    return recv(new_fd, buffer, 20, 0);
 
 }
+/*
+* This function takes in three parameters
+* and sends data to new_fd, with a size, 
+* and buffer, returning the amount of data sent
+*/
 int sendData(int new_fd, int size, void* buffer){
     return send(new_fd, buffer, size, 0);
     
 }
-
+/*
+* This code was slightly modified from Beej's guide
+* to ensure that the proper pointer or reference is passed in
+* and is intended to further breakup the code for reuse
+*/
 void bindHostConnection(int* controlSock, int yes, struct addrinfo **p, struct addrinfo *servinfo)
 {
     for(*p = servinfo; *p != NULL; *p = (*p)->ai_next) {
@@ -111,7 +144,11 @@ void bindHostConnection(int* controlSock, int yes, struct addrinfo **p, struct a
     }
 
 }
-
+/*
+* This code was slightly modified from Beej's guide
+* to ensure that the proper pointer or reference is passed in
+* and is intended to further breakup the code for reuse
+*/
 int bindClientConnection(int* sockfd, struct addrinfo **p, struct addrinfo *servinfo)
 {
 
@@ -136,7 +173,11 @@ int bindClientConnection(int* sockfd, struct addrinfo **p, struct addrinfo *serv
     }
 
 }
-
+/*
+* This is taken from Beej's guide
+* and is intended to setup the program
+* to handle forking and may be removed if forking is removed
+*/
 void sigchildSetup(struct sigaction sa)
 {
     sa.sa_handler = sigchld_handler; // reap all dead processes
@@ -148,6 +189,11 @@ void sigchildSetup(struct sigaction sa)
     }
 
 }
+/*
+* This is taken from Beej's guide
+* and is intended to setup the socket
+* for the server
+*/
 void socketSetup(struct addrinfo *hints, int isHost)
 {
 
@@ -156,13 +202,22 @@ void socketSetup(struct addrinfo *hints, int isHost)
     hints->ai_socktype = SOCK_STREAM;
     hints->ai_flags = AI_PASSIVE; // use my IP
 }
-
+/*
+* This checks to make sure that the 
+* client is sending an approved command to the control
+* socket and returns true or false otherwise
+*/
 int validCommand(char* command)
 {
     if(strcmp(command, "-l") == 0 || strcmp(command, "-g") == 0)
         return 1;
     return 0;
 }
+/*
+* This function sends the directory listing 
+* of the current working directory
+* to the client to the socket provided
+*/
 void sendListDir(int socket)
 {
     char* filenames;
@@ -171,26 +226,37 @@ void sendListDir(int socket)
     sendData(socket, 4, &size);
     sendData(socket, strlen(filenames), filenames);
 }
+/*
+* This function sends the file using the filename
+* and socket given to the function
+* and returns 1 if the file cannot be found
+*/
 int sendFile(int socket, char* filename)
 {
-    char buffer[512], *result;
+    int total;
+    char buffer[512], totalbuffer[512], *result;
     FILE* file;
     file = fopen(filename, "r");
+    total = 0;
     if(file == NULL)
     {
         return 1;
     }
+    fseek(file, 0 , SEEK_END);
+    unsigned fileSize = ftell(file);
+    printf("The file length is: %d", fileSize);
+    sendData(socket,4, &fileSize);
+    rewind(file);
     while((result = fgets(buffer, 512, file)) != NULL)
     {
-        printf("Sending: %s", result);
-        sendData(socket, 10, buffer);
+        sendData(socket, strlen(buffer), buffer);
     }
     return 0;
 
 }
-int main(void)
+int main(int argc, char* argv[])
 {
-    printf("Server open on %s\n", CONTROL_PORT);
+    printf("Server open on %s\n", argv[1]);
     
     struct sigaction sa;
     sigchildSetup(sa);
@@ -206,7 +272,7 @@ int main(void)
 
     socketSetup(&hints, 1);
 
-    if ((rv = getaddrinfo(NULL, CONTROL_PORT, &hints, &servinfo)) != 0) {
+    if ((rv = getaddrinfo(NULL, argv[1], &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return 1;
     }
@@ -245,16 +311,15 @@ int main(void)
             get_in_addr((struct sockaddr *)&their_addr),
             s, sizeof s);
 
-        char host[1024];
+        char hostname[1024];
         char service[20];
-        getnameinfo(&their_addr,sizeof their_addr, host, sizeof host, service, sizeof service, 0);
-        printf("host: %s\n", host);
+        getnameinfo(&their_addr,sizeof their_addr, hostname, sizeof hostname, service, sizeof service, 0);
+        printf("Connection from: %s\n", hostname);
 
 
         if (!fork()) { // this is the child process
             close(controlConnection); // child doesn't need the listener
-            if (receiveCommand(controlSocket, buffer))
-                perror("send");
+            receiveCommand(controlSocket, buffer);
             parseCommand(buffer, port, command, filename);
 
             if(validCommand(command)){
@@ -269,7 +334,6 @@ int main(void)
                 close(controlSocket);
                 continue;
             }
-            close(controlSocket);
             memset(&hints, 0, sizeof hints);
             hints.ai_family = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
@@ -290,18 +354,20 @@ int main(void)
 
             if(strcmp(command, "-l") == 0)
             {
+                printf("Sending directory contents to %s:%s", hostname, port);
                 sendListDir(sockfd);
             }
             if(strcmp(command, "-g") == 0)
             {
                 printf("Sending file");
-                sendFile(sockfd, filename);
+                if(sendFile(sockfd, filename) == 1)
+                {
+                    
+                }
             }
 
-            close(controlSocket);
             exit(0);
         }
-            close(controlSocket);  // parent doesn't need this
     }
 
         return 0;
